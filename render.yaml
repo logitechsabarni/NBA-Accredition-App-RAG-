@@ -1,0 +1,120 @@
+## ============================================================
+## NBA Enterprise AI Platform — Render Deployment Configuration
+## https://render.com/docs/render-yaml
+## ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # FastAPI Backend
+  # ----------------------------------------------------------
+  - type: web
+    name: nba-platform-backend
+    runtime: python
+    region: oregon
+    plan: standard
+    branch: main
+    rootDir: backend
+    buildCommand: |
+      pip install --upgrade pip &&
+      pip install -r requirements.txt &&
+      alembic upgrade head
+    startCommand: |
+      uvicorn main:app --host 0.0.0.0 --port $PORT --workers 4 --loop uvloop
+    healthCheckPath: /health
+    autoDeploy: true
+    scaling:
+      minInstances: 1
+      maxInstances: 5
+      targetMemoryPercent: 80
+      targetCPUPercent: 70
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nba-platform-postgres
+          property: connectionString
+      - key: MONGO_URI
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: nba-platform-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: WATSONX_API_KEY
+        sync: false
+      - key: WATSONX_PROJECT_ID
+        sync: false
+      - key: WATSONX_URL
+        value: https://us-south.ml.cloud.ibm.com
+      - key: EMBEDDING_MODEL
+        value: all-MiniLM-L6-v2
+      - key: FAISS_INDEX_PATH
+        value: /opt/render/project/src/vector_db/faiss_index
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: METRICS_ENABLED
+        value: true
+      - key: BCRYPT_ROUNDS
+        value: 12
+
+  # ----------------------------------------------------------
+  # Background Worker (LangGraph agent queue)
+  # ----------------------------------------------------------
+  - type: worker
+    name: nba-platform-worker
+    runtime: python
+    region: oregon
+    plan: standard
+    branch: main
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m workers.agent_worker
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nba-platform-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: nba-platform-redis
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+
+  # ----------------------------------------------------------
+  # Redis — Cache & Queue
+  # ----------------------------------------------------------
+  - type: redis
+    name: nba-platform-redis
+    region: oregon
+    plan: standard
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+# ----------------------------------------------------------
+# PostgreSQL Database
+# ----------------------------------------------------------
+databases:
+  - name: nba-platform-postgres
+    region: oregon
+    plan: standard
+    databaseName: nba_platform
+    user: nba_admin
+    postgresMajorVersion: 15
+    ipAllowList: []

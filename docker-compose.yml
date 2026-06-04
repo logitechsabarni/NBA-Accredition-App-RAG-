@@ -1,0 +1,234 @@
+version: "3.9"
+
+# ============================================================
+# NBA Enterprise AI Platform — Docker Compose
+# Production-grade multi-service orchestration
+# ============================================================
+
+networks:
+  nba_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  mongo_data:
+    driver: local
+  redis_data:
+    driver: local
+  faiss_data:
+    driver: local
+  logs_data:
+    driver: local
+
+services:
+
+  # ----------------------------------------------------------
+  # POSTGRESQL — Primary relational database
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: nba_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nba_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-nba_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nba_admin} -d ${POSTGRES_DB:-nba_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ----------------------------------------------------------
+  # MONGODB — NoSQL for audit logs, chat history, analytics
+  # ----------------------------------------------------------
+  mongodb:
+    image: mongo:7.0
+    container_name: nba_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-nba_mongo_admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-changeme}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-nba_platform_nosql}
+    volumes:
+      - mongo_data:/data/db
+      - ./backend/db/mongo_init.js:/docker-entrypoint-initdb.d/mongo_init.js:ro
+    ports:
+      - "27017:27017"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.11
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ----------------------------------------------------------
+  # REDIS — Cache, sessions, rate limiting, queues
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: nba_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-changeme}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.12
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # BACKEND — FastAPI application
+  # ----------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: nba_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nba_admin}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-nba_platform}
+      MONGO_URI: mongodb://${MONGO_USER:-nba_mongo_admin}:${MONGO_PASSWORD:-changeme}@mongodb:27017/${MONGO_DB:-nba_platform_nosql}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+    volumes:
+      - faiss_data:/app/vector_db
+      - logs_data:/app/logs
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ----------------------------------------------------------
+  # FRONTEND — React + Vite (production build served by Nginx)
+  # ----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: nba_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.30
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ----------------------------------------------------------
+  # NGINX — Reverse proxy & load balancer
+  # ----------------------------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nba_nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deployment/ssl:/etc/nginx/ssl:ro
+      - logs_data:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.40
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ----------------------------------------------------------
+  # PROMETHEUS — Metrics collection
+  # ----------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: nba_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./deployment/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.50
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+
+  # ----------------------------------------------------------
+  # GRAFANA — Metrics visualization
+  # ----------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: nba_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deployment/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deployment/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    networks:
+      nba_network:
+        ipv4_address: 172.20.0.51
+    depends_on:
+      - prometheus

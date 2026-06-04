@@ -1,0 +1,541 @@
+## ============================================================
+## NBA Enterprise AI Platform — Kubernetes Manifests
+## Deploy with: kubectl apply -f kubernetes.yaml
+## ============================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nba-platform
+  labels:
+    app: nba-enterprise-ai-platform
+    environment: production
+
+---
+## ============================================================
+## SECRETS
+## ============================================================
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nba-platform-secrets
+  namespace: nba-platform
+type: Opaque
+stringData:
+  SECRET_KEY: "REPLACE_WITH_ACTUAL_SECRET"
+  JWT_SECRET_KEY: "REPLACE_WITH_ACTUAL_JWT_SECRET"
+  POSTGRES_PASSWORD: "REPLACE_WITH_ACTUAL_POSTGRES_PASSWORD"
+  MONGO_PASSWORD: "REPLACE_WITH_ACTUAL_MONGO_PASSWORD"
+  REDIS_PASSWORD: "REPLACE_WITH_ACTUAL_REDIS_PASSWORD"
+  OPENAI_API_KEY: "REPLACE_WITH_ACTUAL_OPENAI_KEY"
+  WATSONX_API_KEY: "REPLACE_WITH_ACTUAL_WATSONX_KEY"
+  WATSONX_PROJECT_ID: "REPLACE_WITH_ACTUAL_WATSONX_PROJECT"
+
+---
+## ============================================================
+## CONFIGMAP
+## ============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nba-platform-config
+  namespace: nba-platform
+data:
+  APP_ENV: "production"
+  DEBUG: "false"
+  LOG_LEVEL: "INFO"
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "nba_platform"
+  POSTGRES_USER: "nba_admin"
+  MONGO_HOST: "mongodb-service"
+  MONGO_PORT: "27017"
+  MONGO_DB: "nba_platform_nosql"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  EMBEDDING_MODEL: "all-MiniLM-L6-v2"
+  FAISS_INDEX_PATH: "/app/vector_db/faiss_index"
+  DEFAULT_LLM_PROVIDER: "auto"
+  METRICS_ENABLED: "true"
+  BCRYPT_ROUNDS: "12"
+  WATSONX_URL: "https://us-south.ml.cloud.ibm.com"
+
+---
+## ============================================================
+## POSTGRESQL — StatefulSet
+## ============================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: nba-platform
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: nba-platform-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: nba-platform-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nba-platform-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - nba_admin
+                - -d
+                - nba_platform
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - nba_admin
+                - -d
+                - nba_platform
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: nba-platform
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+
+---
+## ============================================================
+## MONGODB — StatefulSet
+## ============================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: nba-platform
+spec:
+  serviceName: mongodb-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          ports:
+            - containerPort: 27017
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: nba-platform-config
+                  key: MONGO_HOST
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nba-platform-secrets
+                  key: MONGO_PASSWORD
+          volumeMounts:
+            - name: mongo-storage
+              mountPath: /data/db
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: nba-platform
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - port: 27017
+      targetPort: 27017
+  clusterIP: None
+
+---
+## ============================================================
+## REDIS — Deployment
+## ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: nba-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          ports:
+            - containerPort: 6379
+          command:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - allkeys-lru
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nba-platform-secrets
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: nba-platform
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+
+---
+## ============================================================
+## BACKEND — Deployment
+## ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nba-backend
+  namespace: nba-platform
+  labels:
+    app: nba-backend
+    version: "1.0.0"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nba-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: nba-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: nba-backend
+          image: nba-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: nba-platform-config
+            - secretRef:
+                name: nba-platform-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://nba_admin:$(POSTGRES_PASSWORD)@postgres-service:5432/nba_platform"
+            - name: MONGO_URI
+              value: "mongodb://nba_mongo_admin:$(MONGO_PASSWORD)@mongodb-service:27017/nba_platform_nosql"
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
+          volumeMounts:
+            - name: faiss-storage
+              mountPath: /app/vector_db
+            - name: logs-storage
+              mountPath: /app/logs
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: faiss-storage
+          persistentVolumeClaim:
+            claimName: faiss-pvc
+        - name: logs-storage
+          persistentVolumeClaim:
+            claimName: logs-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nba-backend-service
+  namespace: nba-platform
+spec:
+  selector:
+    app: nba-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+## ============================================================
+## FRONTEND — Deployment
+## ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nba-frontend
+  namespace: nba-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nba-frontend
+  template:
+    metadata:
+      labels:
+        app: nba-frontend
+    spec:
+      containers:
+        - name: nba-frontend
+          image: nba-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nba-frontend-service
+  namespace: nba-platform
+spec:
+  selector:
+    app: nba-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+
+---
+## ============================================================
+## INGRESS
+## ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nba-platform-ingress
+  namespace: nba-platform
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rate-limit: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  tls:
+    - hosts:
+        - api.nba-platform.example.com
+        - app.nba-platform.example.com
+      secretName: nba-platform-tls
+  rules:
+    - host: api.nba-platform.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nba-backend-service
+                port:
+                  number: 8000
+    - host: app.nba-platform.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nba-frontend-service
+                port:
+                  number: 80
+
+---
+## ============================================================
+## HORIZONTAL POD AUTOSCALER
+## ============================================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nba-backend-hpa
+  namespace: nba-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nba-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+## ============================================================
+## PERSISTENT VOLUME CLAIMS
+## ============================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: faiss-pvc
+  namespace: nba-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logs-pvc
+  namespace: nba-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

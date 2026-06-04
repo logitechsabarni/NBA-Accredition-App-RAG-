@@ -11,11 +11,16 @@
 
 
 Intelligent, Explainable Race Strategy 
+
+
 Powered by
-https://skillsbuild.org/
+
+
+<img width="242" height="28" alt="image" src="https://github.com/user-attachments/assets/40267c5d-ea79-47c7-bb03-91c4ba3f5ac6" />
 <img width="150" height="28" alt="image" src="https://github.com/user-attachments/assets/95ce5eba-232e-45ed-8fe6-11f3eebbb24b" />
-https://www.ibm.com/watsonx
-https://langflow.org/
+<img width="157" height="28" alt="image" src="https://github.com/user-attachments/assets/689f91df-c63a-4663-bfe3-ab8be280662a" />
+<img width="227" height="28" alt="image" src="https://github.com/user-attachments/assets/6db8b15e-1e90-495c-ba59-7e185c9a5eaf" />
+
 
 
 Python React License

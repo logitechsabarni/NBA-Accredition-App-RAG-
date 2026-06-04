@@ -9,6 +9,16 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-Agentic-orange?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
+
+Intelligent, Explainable Race Strategy Powered by IBM Granite AI
+IBM SkillsBuild IBM Granite watsonx.ai Langflow
+
+Python React License
+
+Transform racing telemetry into intelligent, explainable strategy decisions in real-time
+
+
+
 **Production-grade AI-powered NBA Accreditation Management SaaS Platform**
 
 [Features](#features) • [Architecture](#architecture) • [Quick Start](#quick-start) • [API Docs](#api-documentation) • [Deployment](#deployment)

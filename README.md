@@ -10,8 +10,13 @@
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
 
-Intelligent, Explainable Race Strategy Powered by IBM Granite AI
-IBM SkillsBuild IBM Granite watsonx.ai Langflow
+Intelligent, Explainable Race Strategy 
+Powered by
+https://skillsbuild.org/
+<img width="150" height="28" alt="image" src="https://github.com/user-attachments/assets/95ce5eba-232e-45ed-8fe6-11f3eebbb24b" />
+https://www.ibm.com/watsonx
+https://langflow.org/
+
 
 Python React License
 

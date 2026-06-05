@@ -1,21 +1,17 @@
 import { createSlice } from "@reduxjs/toolkit";
 
-const initialState = {
-  messages: [],
-  loading: false,
-  typing: false,
-};
-
 const chatSlice = createSlice({
   name: "chat",
-  initialState,
+
+  initialState: {
+    messages: [],
+    loading: false,
+    isTyping: false,
+  },
+
   reducers: {
     addMessage(state, action) {
       state.messages.push(action.payload);
-    },
-
-    clearMessages(state) {
-      state.messages = [];
     },
 
     setLoading(state, action) {
@@ -23,16 +19,20 @@ const chatSlice = createSlice({
     },
 
     setTyping(state, action) {
-      state.typing = action.payload;
+      state.isTyping = action.payload;
+    },
+
+    clearChat(state) {
+      state.messages = [];
     },
   },
 });
 
 export const {
   addMessage,
-  clearMessages,
   setLoading,
   setTyping,
+  clearChat,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;

@@ -1,0 +1,14 @@
+POST /auth/login
+POST /auth/register
+POST /auth/refresh
+
+GET  /users/me
+
+POST /chat/message
+
+POST /workflow/execute
+
+GET  /analytics/dashboard
+GET  /analytics/readiness
+
+GET  /health

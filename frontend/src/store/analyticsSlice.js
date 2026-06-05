@@ -1,16 +1,16 @@
 import { createSlice } from "@reduxjs/toolkit";
 
-const initialState = {
-  dashboard: {},
-  readiness: {},
-  loading: false,
-};
-
 const analyticsSlice = createSlice({
   name: "analytics",
-  initialState,
+
+  initialState: {
+    dashboard: null,
+    readiness: null,
+    loading: false,
+  },
+
   reducers: {
-    setDashboard(state, action) {
+    setAnalytics(state, action) {
       state.dashboard = action.payload;
     },
 
@@ -25,7 +25,7 @@ const analyticsSlice = createSlice({
 });
 
 export const {
-  setDashboard,
+  setAnalytics,
   setReadiness,
   setAnalyticsLoading,
 } = analyticsSlice.actions;

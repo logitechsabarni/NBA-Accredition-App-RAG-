@@ -1,12 +1,20 @@
-import React from "react";
+import { useSelector } from "react-redux";
 import AppRoutes from "./routes/AppRoutes";
 
-function App() {
+export default function App() {
+  const darkMode = useSelector(
+    (state) => state.ui.darkMode
+  );
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <AppRoutes />
+    <div
+      className={
+        darkMode ? "dark" : ""
+      }
+    >
+      <div className="bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white min-h-screen transition-all">
+        <AppRoutes />
+      </div>
     </div>
   );
 }
-
-export default App;

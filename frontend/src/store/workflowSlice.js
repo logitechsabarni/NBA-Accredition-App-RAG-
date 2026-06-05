@@ -1,21 +1,21 @@
 import { createSlice } from "@reduxjs/toolkit";
 
-const initialState = {
-  workflows: [],
-  currentWorkflow: null,
-  loading: false,
-};
-
 const workflowSlice = createSlice({
   name: "workflow",
-  initialState,
+
+  initialState: {
+    executions: [],
+    currentWorkflow: null,
+    loading: false,
+  },
+
   reducers: {
-    setWorkflows(state, action) {
-      state.workflows = action.payload;
+    setWorkflow(state, action) {
+      state.currentWorkflow = action.payload;
     },
 
-    setCurrentWorkflow(state, action) {
-      state.currentWorkflow = action.payload;
+    addExecution(state, action) {
+      state.executions.unshift(action.payload);
     },
 
     setWorkflowLoading(state, action) {
@@ -25,8 +25,8 @@ const workflowSlice = createSlice({
 });
 
 export const {
-  setWorkflows,
-  setCurrentWorkflow,
+  setWorkflow,
+  addExecution,
   setWorkflowLoading,
 } = workflowSlice.actions;
 

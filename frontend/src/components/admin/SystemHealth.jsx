@@ -1,38 +1,65 @@
-import { CheckCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import adminService from "../../services/adminService";
 
 export default function SystemHealth() {
-  const systems = [
-    "API Gateway",
-    "PostgreSQL",
-    "Redis",
-    "Vector DB",
-    "LLM Router",
-  ];
+  const [health, setHealth] = useState(null);
+
+  useEffect(() => {
+    loadHealth();
+  }, []);
+
+  const loadHealth = async () => {
+    const data = await adminService.getSystemHealth();
+    setHealth(data);
+  };
+
+  if (!health) return null;
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl p-5 shadow">
-
-      <h2 className="text-xl font-bold mb-5">
+    <div className="bg-slate-900 p-6 rounded-xl">
+      <h2 className="text-xl font-bold mb-4">
         System Health
       </h2>
 
       <div className="space-y-4">
+        <Status
+          title="API"
+          value={health.api}
+        />
 
-        {systems.map((system) => (
-          <div
-            key={system}
-            className="flex items-center justify-between"
-          >
-            <span>{system}</span>
+        <Status
+          title="Database"
+          value={health.database}
+        />
 
-            <CheckCircle
-              className="text-green-500"
-            />
-          </div>
-        ))}
+        <Status
+          title="Redis"
+          value={health.redis}
+        />
 
+        <Status
+          title="Vector Store"
+          value={health.vector}
+        />
       </div>
+    </div>
+  );
+}
 
+function Status({ title, value }) {
+  return (
+    <div className="flex justify-between">
+      <span>{title}</span>
+
+      <span
+        className={
+          value === "healthy"
+            ? "text-green-400"
+            : "text-red-400"
+        }
+      >
+        {value}
+      </span>
     </div>
   );
 }

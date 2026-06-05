@@ -1,38 +1,20 @@
 import api from "./api";
 
 const adminService = {
-  async getUsers() {
-    const response = await api.get(
-      "/users"
-    );
-
-    return response.data;
+  getUsers: async () => {
+    const res = await api.get("/admin/users");
+    return res.data;
   },
 
-  async updateUser(id, payload) {
-    const response = await api.patch(
-      `/users/${id}`,
-      payload
-    );
-
-    return response.data;
+  getAuditLogs: async () => {
+    const res = await api.get("/admin/audit");
+    return res.data;
   },
 
-  async getAuditLogs() {
-    const response = await api.get(
-      "/audit-logs"
-    );
-
-    return response.data;
-  },
-
-  async getSystemHealth() {
-    const response = await api.get(
-      "/health"
-    );
-
-    return response.data;
-  },
+  getSystemHealth: async () => {
+    const res = await api.get("/health");
+    return res.data;
+  }
 };
 
 export default adminService;

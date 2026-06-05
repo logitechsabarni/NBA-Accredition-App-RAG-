@@ -1,80 +1,144 @@
-import React from "react";
 import { NavLink } from "react-router-dom";
-import { useSelector } from "react-redux";
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Workflow,
+  BarChart3,
+  Settings,
+  ShieldCheck,
+  User,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+import { useState } from "react";
 
 const menuItems = [
   {
-    name: "Dashboard",
+    title: "Dashboard",
     path: "/dashboard",
-    icon: "📊",
+    icon: LayoutDashboard,
   },
   {
-    name: "AI Chat",
+    title: "AI Chat",
     path: "/chat",
-    icon: "🤖",
+    icon: MessageSquare,
   },
   {
-    name: "Workflow",
+    title: "Workflows",
     path: "/workflow",
-    icon: "⚙️",
+    icon: Workflow,
   },
   {
-    name: "Analytics",
+    title: "Analytics",
     path: "/analytics",
-    icon: "📈",
+    icon: BarChart3,
   },
   {
-    name: "Profile",
+    title: "Profile",
     path: "/profile",
-    icon: "👤",
+    icon: User,
   },
   {
-    name: "Settings",
+    title: "Admin",
+    path: "/admin",
+    icon: ShieldCheck,
+    adminOnly: true,
+  },
+  {
+    title: "Settings",
     path: "/settings",
-    icon: "🔧",
+    icon: Settings,
   },
 ];
 
-const Sidebar = () => {
-  const { sidebarOpen } = useSelector(
-    (state) => state.ui
-  );
+export default function Sidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const userRole = localStorage.getItem("role") || "faculty";
 
   return (
     <aside
-      className={`${
-        sidebarOpen ? "w-64" : "w-20"
-      } bg-slate-900 border-r border-slate-800 min-h-screen transition-all duration-300`}
+      className={`h-screen bg-slate-950 border-r border-slate-800 transition-all duration-300 ${
+        collapsed ? "w-20" : "w-72"
+      }`}
     >
-      <div className="p-6">
-        <h1 className="font-bold text-xl text-white">
-          NBA AI
-        </h1>
+      {/* Header */}
+      <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
+        {!collapsed && (
+          <div>
+            <h1 className="font-bold text-lg text-white">
+              NBA AI Platform
+            </h1>
+
+            <p className="text-xs text-slate-400">
+              Enterprise Edition
+            </p>
+          </div>
+        )}
+
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="p-2 rounded-lg hover:bg-slate-800"
+        >
+          {collapsed ? (
+            <ChevronRight size={18} />
+          ) : (
+            <ChevronLeft size={18} />
+          )}
+        </button>
       </div>
 
-      <nav className="px-3 space-y-2">
-        {menuItems.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-                isActive
-                  ? "bg-blue-600 text-white"
-                  : "text-slate-300 hover:bg-slate-800"
-              }`
-            }
-          >
-            <span>{item.icon}</span>
+      {/* Menu */}
+      <nav className="p-4 space-y-2">
+        {menuItems
+          .filter(
+            (item) =>
+              !item.adminOnly ||
+              userRole === "admin"
+          )
+          .map((item) => {
+            const Icon = item.icon;
 
-            {sidebarOpen && (
-              <span>{item.name}</span>
-            )}
-          </NavLink>
-        ))}
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  `
+                  flex items-center gap-3 px-4 py-3 rounded-xl
+                  transition-all duration-200
+                  ${
+                    isActive
+                      ? "bg-blue-600 text-white"
+                      : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                  }
+                `
+                }
+              >
+                <Icon size={20} />
+
+                {!collapsed && (
+                  <span>{item.title}</span>
+                )}
+              </NavLink>
+            );
+          })}
       </nav>
+
+      {/* Footer */}
+      {!collapsed && (
+        <div className="absolute bottom-5 left-4 right-4">
+          <div className="bg-slate-900 rounded-xl p-4 border border-slate-800">
+            <p className="text-sm font-medium">
+              NBA Accreditation
+            </p>
+
+            <p className="text-xs text-slate-400 mt-1">
+              AI-Powered Readiness Platform
+            </p>
+          </div>
+        </div>
+      )}
     </aside>
   );
-};
-
-export default Sidebar;
+}

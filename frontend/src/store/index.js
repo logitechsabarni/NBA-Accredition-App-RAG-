@@ -6,7 +6,7 @@ import workflowReducer from "./workflowSlice";
 import analyticsReducer from "./analyticsSlice";
 import uiReducer from "./uiSlice";
 
-const store = configureStore({
+export const store = configureStore({
   reducer: {
     auth: authReducer,
     chat: chatReducer,
@@ -15,5 +15,3 @@ const store = configureStore({
     ui: uiReducer,
   },
 });
-
-export default store;

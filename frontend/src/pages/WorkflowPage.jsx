@@ -1,48 +1,106 @@
 import React from "react";
-import Layout from "../components/layout/Layout";
 
-const WorkflowPage = () => {
-  const nodes = [
-    "Intent Classification",
-    "Task Routing",
-    "Compliance Check",
-    "Agent Execution",
-    "Validation",
-    "RAG Retrieval",
-    "LLM Generation",
-    "Audit Logging",
+import LangGraphVisualizer from "../components/workflow/LangGraphVisualizer";
+import ExecutionPanel from "../components/workflow/ExecutionPanel";
+import WorkflowTimeline from "../components/workflow/WorkflowTimeline";
+
+export default function WorkflowPage() {
+  const workflowNodes = [
+    {
+      id: 1,
+      title: "Intent Classifier",
+      status: "completed",
+      latency: "24 ms",
+      description: "Classified request type",
+    },
+    {
+      id: 2,
+      title: "Task Router",
+      status: "completed",
+      latency: "11 ms",
+      description: "Selected specialist agent",
+    },
+    {
+      id: 3,
+      title: "COPO Agent",
+      status: "completed",
+      latency: "211 ms",
+      description: "Generated CO-PO mappings",
+    },
+    {
+      id: 4,
+      title: "Validation Agent",
+      status: "completed",
+      latency: "46 ms",
+      description: "Validated output",
+    },
+    {
+      id: 5,
+      title: "RAG Retrieval",
+      status: "running",
+      latency: "321 ms",
+      description: "Searching NBA knowledge base",
+    },
+    {
+      id: 6,
+      title: "LLM Generation",
+      status: "pending",
+      description: "Awaiting context",
+    },
+  ];
+
+  const timelineEvents = [
+    {
+      node: "Intent Classifier",
+      status: "Completed",
+      timestamp: "09:42:12",
+    },
+    {
+      node: "Task Router",
+      status: "Completed",
+      timestamp: "09:42:13",
+    },
+    {
+      node: "COPO Agent",
+      status: "Completed",
+      timestamp: "09:42:14",
+    },
+    {
+      node: "Validation Agent",
+      status: "Completed",
+      timestamp: "09:42:15",
+    },
+    {
+      node: "RAG Retrieval",
+      status: "Running",
+      timestamp: "09:42:16",
+    },
   ];
 
   return (
-    <Layout>
-      <h1 className="text-3xl font-bold mb-8">
-        Workflow Monitor
-      </h1>
+    <div className="min-h-screen bg-slate-950 text-white p-6">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold">
+          LangGraph Workflow Monitor
+        </h1>
 
-      <div className="space-y-4">
-        {nodes.map((node, index) => (
-          <div
-            key={node}
-            className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex items-center gap-4"
-          >
-            <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center">
-              {index + 1}
-            </div>
-
-            <div>
-              <h3 className="font-semibold">
-                {node}
-              </h3>
-
-              <p className="text-slate-400 text-sm">
-                Active
-              </p>
-            </div>
-          </div>
-        ))}
+        <p className="text-gray-400 mt-2">
+          Real-time orchestration tracking for AI agents,
+          validation, RAG retrieval, and LLM generation.
+        </p>
       </div>
-    </Layout>
-  );
-};
 
-export default WorkflowPage;
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="xl:col-span-2">
+          <LangGraphVisualizer />
+        </div>
+
+        <WorkflowTimeline events={timelineEvents} />
+      </div>
+
+      <div className="mt-6">
+        <ExecutionPanel nodes={workflowNodes} />
+      </div>
+    </div>
+  );
+}

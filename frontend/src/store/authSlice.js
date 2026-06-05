@@ -1,16 +1,17 @@
 import { createSlice } from "@reduxjs/toolkit";
 
-const initialState = {
-  user: null,
-  accessToken: localStorage.getItem("accessToken"),
-  refreshToken: localStorage.getItem("refreshToken"),
-  isAuthenticated: !!localStorage.getItem("accessToken"),
-  loading: false,
-};
+const token = localStorage.getItem("token");
 
 const authSlice = createSlice({
   name: "auth",
-  initialState,
+
+  initialState: {
+    token: token || null,
+    user: null,
+    isAuthenticated: !!token,
+    loading: false,
+  },
+
   reducers: {
     loginStart(state) {
       state.loading = true;
@@ -18,30 +19,20 @@ const authSlice = createSlice({
 
     loginSuccess(state, action) {
       state.loading = false;
+      state.token = action.payload.token;
       state.user = action.payload.user;
-      state.accessToken = action.payload.accessToken;
-      state.refreshToken = action.payload.refreshToken;
       state.isAuthenticated = true;
-
-      localStorage.setItem(
-        "accessToken",
-        action.payload.accessToken
-      );
-
-      localStorage.setItem(
-        "refreshToken",
-        action.payload.refreshToken
-      );
     },
 
     logout(state) {
+      state.token = null;
       state.user = null;
-      state.accessToken = null;
-      state.refreshToken = null;
       state.isAuthenticated = false;
+      localStorage.removeItem("token");
+    },
 
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("refreshToken");
+    setUser(state, action) {
+      state.user = action.payload;
     },
   },
 });
@@ -50,6 +41,7 @@ export const {
   loginStart,
   loginSuccess,
   logout,
+  setUser,
 } = authSlice.actions;
 
 export default authSlice.reducer;

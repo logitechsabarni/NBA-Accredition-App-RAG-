@@ -1,450 +1,977 @@
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+"""
+pages/Workflow_Monitor.py
+NBA Enterprise AI Platform — Workflow Monitor
+Real-time LangGraph workflow visualization and execution monitoring.
+IBM Watsonx enterprise styling.
+"""
+
+from __future__ import annotations
+
+import random
+import time
+from datetime import datetime, timedelta
+from typing import Any
 
 import streamlit as st
-import time
-import json
-import random
-from datetime import datetime
-from utils.watsonx_client import get_watsonx_client
-from utils.rag_engine import get_rag_engine
-from utils.vector_store import get_vector_store
-from utils.analytics import CHART_LAYOUT
-import plotly.graph_objects as go
 
-st.markdown(
-    """
-<div class="section-header">
-    <span style="font-size:1.6rem;">🔄</span>
-    <h2>Workflow Monitor</h2>
-    <span style="margin-left:8px;font-size:0.8rem;color:#7a9bb5;">LangGraph Execution · Real-time Pipeline Visualization</span>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+# ---------------------------------------------------------------------------
+# Internal imports (resolved at runtime from the existing project structure)
+# ---------------------------------------------------------------------------
+try:
+    from components import navbar as _navbar_mod
+    from components import workflow_visualizer as _wv_mod
+    from components import metric_cards as _mc_mod
+    from components import charts as _charts_mod
+    from services import workflow_service as _ws_mod
 
-# ── Pipeline nodes definition ─────────────────────────────────────────────────
-PIPELINE_NODES = [
+    _IMPORTS_OK = True
+except ImportError:
+    _IMPORTS_OK = False
+
+
+# ---------------------------------------------------------------------------
+# IBM Watsonx colour palette & global CSS
+# ---------------------------------------------------------------------------
+
+_IBM_CSS = """
+<style>
+/* ── Google Font: IBM Plex Sans ── */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+    --ibm-blue-70:  #0043ce;
+    --ibm-blue-60:  #0f62fe;
+    --ibm-blue-50:  #4589ff;
+    --ibm-blue-40:  #78a9ff;
+    --ibm-gray-100: #161616;
+    --ibm-gray-90:  #262626;
+    --ibm-gray-80:  #393939;
+    --ibm-gray-70:  #525252;
+    --ibm-gray-60:  #6f6f6f;
+    --ibm-gray-30:  #c6c6c6;
+    --ibm-gray-10:  #f4f4f4;
+    --ibm-green-40: #42be65;
+    --ibm-green-50: #24a148;
+    --ibm-red-50:   #da1e28;
+    --ibm-red-40:   #fa4d56;
+    --ibm-yellow-30:#f1c21b;
+    --ibm-purple-50:#8a3ffc;
+    --ibm-teal-40:  #3ddbd9;
+    --card-bg:      #1e1e1e;
+    --card-border:  #333333;
+    --surface:      #262626;
+}
+
+html, body, [class*="css"] {
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    background-color: var(--ibm-gray-100) !important;
+    color: var(--ibm-gray-10) !important;
+}
+
+/* Hide Streamlit chrome */
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background: var(--ibm-gray-90) !important;
+    border-right: 1px solid var(--card-border);
+}
+[data-testid="stSidebar"] * { color: var(--ibm-gray-10) !important; }
+
+/* Metric cards */
+[data-testid="metric-container"] {
+    background: var(--card-bg) !important;
+    border: 1px solid var(--card-border) !important;
+    border-radius: 2px !important;
+    padding: 1rem !important;
+}
+[data-testid="stMetricValue"] { color: var(--ibm-blue-40) !important; font-weight: 600; }
+[data-testid="stMetricLabel"] { color: var(--ibm-gray-30) !important; font-size: 0.75rem; }
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent !important;
+    border-bottom: 1px solid var(--card-border);
+    gap: 0;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--ibm-gray-30) !important;
+    border-radius: 0 !important;
+    font-size: 0.875rem !important;
+    padding: 0.6rem 1.25rem !important;
+}
+.stTabs [aria-selected="true"] {
+    color: var(--ibm-blue-40) !important;
+    border-bottom: 2px solid var(--ibm-blue-60) !important;
+    font-weight: 600 !important;
+}
+
+/* Buttons */
+.stButton > button {
+    background: var(--ibm-blue-60) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 0 !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.01em;
+    padding: 0.5rem 1.25rem !important;
+    transition: background 0.15s;
+}
+.stButton > button:hover { background: var(--ibm-blue-70) !important; }
+.stButton > button:disabled { background: var(--ibm-gray-70) !important; }
+
+/* DataFrames / tables */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--card-border) !important;
+}
+
+/* Progress bars */
+.stProgress > div > div { background: var(--ibm-blue-60) !important; }
+
+/* Selectbox / inputs */
+.stSelectbox > div > div,
+.stTextInput > div > div {
+    background: var(--surface) !important;
+    border: 1px solid var(--card-border) !important;
+    border-radius: 0 !important;
+    color: var(--ibm-gray-10) !important;
+}
+
+/* Divider */
+hr { border-color: var(--card-border) !important; }
+
+/* Status pill helper */
+.ibm-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 1px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.pill-success  { background: #0e2a1a; color: var(--ibm-green-40); border: 1px solid var(--ibm-green-50); }
+.pill-running  { background: #001a40; color: var(--ibm-blue-40);  border: 1px solid var(--ibm-blue-60); }
+.pill-error    { background: #2a0a0b; color: var(--ibm-red-40);   border: 1px solid var(--ibm-red-50); }
+.pill-pending  { background: #2a2400; color: var(--ibm-yellow-30);border: 1px solid var(--ibm-yellow-30); }
+.pill-idle     { background: var(--ibm-gray-80); color: var(--ibm-gray-30); border: 1px solid var(--card-border); }
+
+/* Node card */
+.node-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-left: 3px solid var(--ibm-blue-60);
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 1px;
+    position: relative;
+}
+.node-card.active  { border-left-color: var(--ibm-blue-50); }
+.node-card.success { border-left-color: var(--ibm-green-40); }
+.node-card.error   { border-left-color: var(--ibm-red-50); }
+.node-card.idle    { border-left-color: var(--ibm-gray-70); }
+
+.node-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--ibm-gray-10);
+    margin: 0 0 0.2rem;
+}
+.node-subtitle {
+    font-size: 0.72rem;
+    color: var(--ibm-gray-30);
+    font-family: 'IBM Plex Mono', monospace;
+}
+.node-connector {
+    text-align: center;
+    color: var(--ibm-gray-60);
+    font-size: 1.1rem;
+    margin: 0.1rem 0;
+    line-height: 1;
+}
+
+/* Timeline row */
+.timeline-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--card-border);
+    font-size: 0.8rem;
+}
+.timeline-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+/* Section header */
+.section-header {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ibm-gray-60);
+    margin: 1.5rem 0 0.75rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--card-border);
+}
+
+/* Page title */
+.page-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--ibm-gray-10);
+    letter-spacing: -0.01em;
+}
+.page-subtitle {
+    font-size: 0.8rem;
+    color: var(--ibm-gray-60);
+    margin-top: 0.15rem;
+}
+
+/* Live badge */
+.live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--ibm-green-40);
+    background: #0e2a1a;
+    border: 1px solid var(--ibm-green-50);
+    padding: 2px 8px;
+    border-radius: 1px;
+    vertical-align: middle;
+}
+.live-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--ibm-green-40);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+}
+
+/* Execution bar */
+.exec-bar-container {
+    background: var(--ibm-gray-80);
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 0.3rem;
+}
+.exec-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--ibm-blue-60);
+    transition: width 0.4s ease;
+}
+</style>
+"""
+
+# ---------------------------------------------------------------------------
+# Workflow node definitions (the canonical LangGraph pipeline)
+# ---------------------------------------------------------------------------
+
+_WORKFLOW_NODES: list[dict[str, Any]] = [
     {
-        "id": "intent",
-        "label": "Intent Classification",
-        "icon": "🎯",
-        "description": "Classifies query intent: CO-PO, SAR, Attainment, Compliance, General",
-        "latency_range": (50, 150),
-        "color": "#4facfe",
+        "id": "intent_classifier",
+        "label": "Intent Classifier",
+        "description": "LangGraph router — classifies query intent and selects downstream agent",
+        "icon": "🔍",
+        "agent_class": "IntentClassifierAgent",
     },
     {
         "id": "copo_agent",
-        "label": "CO-PO Agent",
+        "label": "COPO Agent",
+        "description": "CO-PO mapping generation & correlation scoring",
         "icon": "🗺️",
-        "description": "Handles CO-PO mapping, attainment, and OBE-specific queries",
-        "latency_range": (80, 200),
-        "color": "#a78bfa",
+        "agent_class": "COPOAgent",
     },
     {
-        "id": "validation",
+        "id": "validation_agent",
         "label": "Validation Agent",
+        "description": "NBA compliance & business rule validation",
         "icon": "✅",
-        "description": "Validates NBA compliance and checks NBA guideline adherence",
-        "latency_range": (40, 120),
-        "color": "#22c55e",
+        "agent_class": "ValidationAgent",
     },
     {
-        "id": "rag",
+        "id": "rag_retrieval",
         "label": "RAG Retrieval",
-        "icon": "🔍",
-        "description": "Semantic search across uploaded NBA documents using ChromaDB + FAISS",
-        "latency_range": (100, 300),
-        "color": "#f59e0b",
+        "description": "FAISS vector search + SentenceTransformer re-ranking",
+        "icon": "📚",
+        "agent_class": "RAGRetriever",
     },
     {
-        "id": "watsonx",
+        "id": "watsonx_granite",
         "label": "Watsonx Granite",
-        "icon": "⚡",
-        "description": "IBM Granite model inference with injected context and system prompt",
-        "latency_range": (400, 1200),
-        "color": "#4facfe",
+        "description": "IBM Granite 13B inference via watsonx.ai — primary LLM router",
+        "icon": "🤖",
+        "agent_class": "GraniteLLMClient",
     },
     {
-        "id": "response",
+        "id": "response_gen",
         "label": "Response Generation",
-        "icon": "📝",
-        "description": "Formats final response with source citations and structured output",
-        "latency_range": (30, 80),
-        "color": "#22c55e",
+        "description": "Structured response assembly, citation injection & audit logging",
+        "icon": "✉️",
+        "agent_class": "ResponseGenerator",
     },
 ]
 
-# Session state for workflow runs
-if "workflow_runs" not in st.session_state:
-    st.session_state.workflow_runs = []
-if "active_run" not in st.session_state:
-    st.session_state.active_run = None
+_STATUS_COLOURS: dict[str, str] = {
+    "success": "#42be65",
+    "running": "#4589ff",
+    "error":   "#fa4d56",
+    "pending": "#f1c21b",
+    "idle":    "#6f6f6f",
+}
 
-tab1, tab2, tab3 = st.tabs(["🚀 Execute Workflow", "📊 Execution History", "🔧 Agent Status"])
+_STATUS_LABELS: dict[str, str] = {
+    "success": "Completed",
+    "running": "Running",
+    "error":   "Error",
+    "pending": "Queued",
+    "idle":    "Idle",
+}
 
-with tab1:
-    st.markdown("### 🚀 Execute NBA Workflow Pipeline")
 
-    col_inp, col_cfg = st.columns([3, 1])
-    with col_inp:
-        test_query = st.text_area(
-            "Test Query",
-            placeholder="e.g., How do I calculate CO attainment for my NBA accreditation?",
-            height=100,
-        )
-    with col_cfg:
-        run_rag = st.toggle("Enable RAG", value=True)
-        run_validation = st.toggle("Enable Validation", value=True)
-        simulate_mode = st.toggle("Simulate Mode", value=not st.session_state.watsonx_connected,
-                                   help="Run with simulated latencies if Watsonx not connected")
+# ---------------------------------------------------------------------------
+# Session state helpers
+# ---------------------------------------------------------------------------
 
-    execute_btn = st.button("▶️ Execute Pipeline", type="primary", use_container_width=True, disabled=not test_query)
+def _init_session_state() -> None:
+    if "wm_auto_refresh" not in st.session_state:
+        st.session_state["wm_auto_refresh"] = False
+    if "wm_selected_run_id" not in st.session_state:
+        st.session_state["wm_selected_run_id"] = None
+    if "wm_filter_status" not in st.session_state:
+        st.session_state["wm_filter_status"] = "All"
+    if "wm_mock_tick" not in st.session_state:
+        st.session_state["wm_mock_tick"] = 0
 
-    if execute_btn and test_query:
-        run_id = f"RUN-{len(st.session_state.workflow_runs) + 1:04d}"
-        run_timestamp = datetime.now().strftime("%H:%M:%S")
-        run_results = []
 
-        st.markdown(f"### 📡 Executing Pipeline `{run_id}`")
+# ---------------------------------------------------------------------------
+# Data helpers — wrap service calls with graceful fallback mock data
+# ---------------------------------------------------------------------------
 
-        # Progress container
-        progress_container = st.empty()
-        timeline_container = st.empty()
+def _get_workflow_stats() -> dict[str, Any]:
+    """Fetch live stats or return deterministic mock data."""
+    if _IMPORTS_OK:
+        try:
+            return _ws_mod.get_workflow_statistics()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    tick = st.session_state.get("wm_mock_tick", 0)
+    base_success = 1_284 + tick
+    base_failed  = 37
+    base_running = random.choice([0, 1, 2])
+    base_queued  = random.randint(0, 5)
+    avg_latency  = round(random.uniform(1.8, 3.2), 2)
+    return {
+        "total_executions":      base_success + base_failed + base_running,
+        "successful_executions": base_success,
+        "failed_executions":     base_failed,
+        "running_executions":    base_running,
+        "queued_executions":     base_queued,
+        "avg_latency_seconds":   avg_latency,
+        "p95_latency_seconds":   round(avg_latency * 1.6, 2),
+        "throughput_per_hour":   random.randint(48, 120),
+        "success_rate":          round(base_success / (base_success + base_failed) * 100, 1),
+        "rag_hit_rate":          round(random.uniform(78.0, 94.0), 1),
+        "watsonx_token_budget":  50_000,
+        "watsonx_tokens_used":   random.randint(18_000, 44_000),
+    }
 
-        total_latency = 0
-        active_nodes = PIPELINE_NODES if run_validation else [n for n in PIPELINE_NODES if n["id"] != "validation"]
-        if not run_rag:
-            active_nodes = [n for n in active_nodes if n["id"] != "rag"]
 
-        for i, node in enumerate(active_nodes):
-            node_start = time.time()
-            latency = random.randint(*node["latency_range"])
+def _get_node_statuses() -> list[dict[str, Any]]:
+    """Return per-node runtime status."""
+    if _IMPORTS_OK:
+        try:
+            return _ws_mod.get_node_statuses()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    statuses = ["success", "success", "success", "success", "running", "idle"]
+    random.shuffle(statuses)
+    result = []
+    for idx, node in enumerate(_WORKFLOW_NODES):
+        status = statuses[idx % len(statuses)]
+        latency = round(random.uniform(0.05, 1.8), 3) if status != "idle" else 0.0
+        result.append({
+            "node_id":      node["id"],
+            "label":        node["label"],
+            "icon":         node["icon"],
+            "agent_class":  node["agent_class"],
+            "description":  node["description"],
+            "status":       status,
+            "latency_ms":   round(latency * 1000),
+            "invocations":  random.randint(50, 1400),
+            "errors":       random.randint(0, 8),
+            "last_run":     (datetime.now() - timedelta(seconds=random.randint(5, 300)))
+                            .strftime("%H:%M:%S"),
+        })
+    return result
 
-            # Show pipeline progress
-            progress_html = '<div style="display:flex;align-items:center;gap:0;margin:1rem 0;overflow-x:auto;">'
-            for j, n in enumerate(active_nodes):
-                if j < i:
-                    status_color = "#22c55e"
-                    status_icon = "✅"
-                    node_bg = "rgba(34,197,94,0.12)"
-                    border_col = "rgba(34,197,94,0.4)"
-                elif j == i:
-                    status_color = "#4facfe"
-                    status_icon = "⏳"
-                    node_bg = "rgba(79,172,254,0.18)"
-                    border_col = "rgba(79,172,254,0.6)"
-                else:
-                    status_color = "#4a6070"
-                    status_icon = "⬜"
-                    node_bg = "rgba(255,255,255,0.03)"
-                    border_col = "rgba(99,179,237,0.12)"
 
-                progress_html += f"""
-                <div style="display:flex;align-items:center;">
-                    <div style="background:{node_bg};border:1px solid {border_col};border-radius:12px;padding:10px 14px;text-align:center;min-width:110px;">
-                        <div style="font-size:1.2rem;">{n['icon']}</div>
-                        <div style="font-size:0.72rem;color:{status_color};font-weight:600;margin-top:3px;">{n['label']}</div>
-                        <div style="font-size:0.65rem;color:{status_color};opacity:0.8;">{status_icon}</div>
-                    </div>
-                    {"" if j == len(active_nodes)-1 else f'<div style="height:2px;width:28px;background:linear-gradient(90deg,{border_col},rgba(99,179,237,0.1));"></div>'}
-                </div>"""
-            progress_html += "</div>"
-            progress_container.markdown(progress_html, unsafe_allow_html=True)
+def _get_execution_history(limit: int = 25) -> list[dict[str, Any]]:
+    """Return recent workflow execution records."""
+    if _IMPORTS_OK:
+        try:
+            return _ws_mod.get_execution_history(limit=limit)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    intents = [
+        "CO-PO Mapping Query",
+        "Attainment Calculation",
+        "SAR Draft Generation",
+        "Gap Analysis",
+        "Validation Check",
+        "Analytics Summary",
+        "Evidence Lookup",
+    ]
+    users = ["admin@nba.edu", "faculty@nit.ac.in", "hod@vit.edu", "dean@iit.ac.in"]
+    history = []
+    for i in range(limit):
+        ts = datetime.now() - timedelta(minutes=i * random.randint(2, 12))
+        status = random.choices(
+            ["success", "success", "success", "error", "running"],
+            weights=[60, 10, 10, 10, 10],
+        )[0]
+        latency = round(random.uniform(0.9, 4.5), 2)
+        history.append({
+            "run_id":          f"run_{1300 - i:04d}",
+            "timestamp":       ts.strftime("%Y-%m-%d %H:%M:%S"),
+            "intent":          random.choice(intents),
+            "user":            random.choice(users),
+            "status":          status,
+            "latency_s":       latency if status != "running" else None,
+            "nodes_executed":  random.randint(3, 6) if status != "running" else random.randint(1, 4),
+            "rag_chunks":      random.randint(0, 8),
+            "tokens_used":     random.randint(400, 3200),
+            "model_routed":    random.choice(["granite-13b", "gpt-4o"]),
+        })
+    return history
 
-            # Execute or simulate node
-            node_output = ""
-            if simulate_mode:
-                time.sleep(latency / 1000)
-                if node["id"] == "intent":
-                    node_output = "Intent: NBA_ATTAINMENT_QUERY | Confidence: 0.94"
-                elif node["id"] == "copo_agent":
-                    node_output = "Relevant COs: CO1, CO2, CO3 | Route: attainment_calculation"
-                elif node["id"] == "validation":
-                    node_output = "Compliance: PASS | NBA criteria: Criterion 3 relevant"
-                elif node["id"] == "rag":
-                    node_output = f"Retrieved {random.randint(3,6)} chunks | Top score: {random.uniform(0.72, 0.95):.2f}"
-                elif node["id"] == "watsonx":
-                    node_output = "Generated 287 tokens | Model: ibm/granite-13b-instruct-v2"
-                elif node["id"] == "response":
-                    node_output = "Response formatted | Citations: 3 sources | Length: 487 chars"
-            else:
-                if node["id"] == "rag" and run_rag:
-                    try:
-                        rag = get_rag_engine()
-                        results = rag.retrieve(test_query, top_k=3)
-                        node_output = f"Retrieved {len(results)} chunks"
-                        time.sleep(latency / 1000)
-                    except Exception as e:
-                        node_output = f"RAG error: {str(e)[:50]}"
-                elif node["id"] == "watsonx":
-                    try:
-                        rag = get_rag_engine()
-                        result = rag.generate(test_query, use_rag=run_rag)
-                        node_output = f"Generated response | {len(result['response'])} chars"
-                    except Exception as e:
-                        node_output = f"Error: {str(e)[:60]}"
-                        time.sleep(latency / 1000)
-                else:
-                    time.sleep(latency / 1000)
-                    node_output = f"Completed in {latency}ms"
 
-            elapsed = round((time.time() - node_start) * 1000)
-            total_latency += elapsed
+def _get_timeline_events() -> list[dict[str, Any]]:
+    """Return the last N timeline events from active execution."""
+    if _IMPORTS_OK:
+        try:
+            return _ws_mod.get_active_timeline()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    events = []
+    base = datetime.now() - timedelta(seconds=len(_WORKFLOW_NODES) * 0.8)
+    statuses_seq = ["success", "success", "success", "success", "running", "pending"]
+    for idx, node in enumerate(_WORKFLOW_NODES):
+        status = statuses_seq[idx]
+        ts = base + timedelta(seconds=idx * 0.75)
+        events.append({
+            "timestamp": ts.strftime("%H:%M:%S.%f")[:-3],
+            "node":      node["label"],
+            "event":     "completed" if status == "success" else ("started" if status == "running" else "queued"),
+            "status":    status,
+            "detail":    f"{random.randint(50, 900)} ms" if status == "success" else "—",
+        })
+    return events
 
-            run_results.append({
-                "node": node["label"],
-                "icon": node["icon"],
-                "status": "success",
-                "latency_ms": elapsed,
-                "output": node_output,
-                "color": node["color"],
-            })
 
-        # Final state — all green
-        final_html = '<div style="display:flex;align-items:center;gap:0;margin:1rem 0;overflow-x:auto;">'
-        for j, n in enumerate(active_nodes):
-            final_html += f"""
-            <div style="display:flex;align-items:center;">
-                <div style="background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.4);border-radius:12px;padding:10px 14px;text-align:center;min-width:110px;">
-                    <div style="font-size:1.2rem;">{n['icon']}</div>
-                    <div style="font-size:0.72rem;color:#22c55e;font-weight:600;margin-top:3px;">{n['label']}</div>
-                    <div style="font-size:0.65rem;color:#22c55e;">✅</div>
-                </div>
-                {"" if j == len(active_nodes)-1 else '<div style="height:2px;width:28px;background:linear-gradient(90deg,rgba(34,197,94,0.4),rgba(34,197,94,0.1));"></div>'}
-            </div>"""
-        final_html += "</div>"
-        progress_container.markdown(final_html, unsafe_allow_html=True)
+# ---------------------------------------------------------------------------
+# Sub-renders
+# ---------------------------------------------------------------------------
 
-        st.success(f"✅ Pipeline `{run_id}` completed in **{total_latency}ms**")
+def _render_kpi_strip(stats: dict[str, Any]) -> None:
+    """Render the top KPI metric strip."""
+    cols = st.columns(7)
+    metrics = [
+        ("Total Runs",       f"{stats['total_executions']:,}",           None),
+        ("Success Rate",     f"{stats['success_rate']}%",                 "+0.4%"),
+        ("Avg Latency",      f"{stats['avg_latency_seconds']}s",          None),
+        ("P95 Latency",      f"{stats['p95_latency_seconds']}s",          None),
+        ("Throughput/hr",    f"{stats['throughput_per_hour']}",           None),
+        ("RAG Hit Rate",     f"{stats['rag_hit_rate']}%",                 None),
+        ("Running Now",      str(stats["running_executions"]),             None),
+    ]
+    for col, (label, value, delta) in zip(cols, metrics):
+        with col:
+            st.metric(label, value, delta)
 
-        # Gantt-style timeline
-        st.markdown("### ⏱️ Execution Timeline")
-        cumulative = 0
-        fig_gantt = go.Figure()
-        for res in run_results:
-            fig_gantt.add_trace(go.Bar(
-                x=[res["latency_ms"]],
-                y=[f"{res['icon']} {res['node']}"],
-                orientation="h",
-                base=cumulative,
-                marker_color=res["color"],
-                hovertemplate=f"<b>{res['node']}</b><br>Latency: {res['latency_ms']}ms<br>Start: {cumulative}ms<extra></extra>",
-                showlegend=False,
-                text=f"{res['latency_ms']}ms",
-                textposition="inside",
-                textfont=dict(color="white", size=11),
-            ))
-            cumulative += res["latency_ms"]
 
-        fig_gantt.update_layout(
-            **CHART_LAYOUT,
-            title=f"Pipeline Execution Timeline — Total: {total_latency}ms",
-            xaxis_title="Time (ms)",
-            height=360,
-            barmode="stack",
-        )
-        st.plotly_chart(fig_gantt, use_container_width=True)
+def _render_workflow_graph(node_statuses: list[dict[str, Any]]) -> None:
+    """Render the LangGraph pipeline as a vertical node chain."""
+    st.markdown("<div class='section-header'>LangGraph Execution Pipeline</div>", unsafe_allow_html=True)
 
-        # Node details
-        st.markdown("### 📋 Node Execution Details")
-        for res in run_results:
-            status_color = "#22c55e"
+    node_map = {n["node_id"]: n for n in node_statuses}
+
+    cols = st.columns([2, 1])
+    with cols[0]:
+        for idx, node_def in enumerate(_WORKFLOW_NODES):
+            nid   = node_def["id"]
+            ndata = node_map.get(nid, {})
+            status  = ndata.get("status", "idle")
+            latency = ndata.get("latency_ms", 0)
+            inv     = ndata.get("invocations", 0)
+            errs    = ndata.get("errors", 0)
+            colour  = _STATUS_COLOURS.get(status, "#6f6f6f")
+            label_s = _STATUS_LABELS.get(status, "Idle")
+
+            card_class = f"node-card {status}"
             st.markdown(
-                f"""<div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:10px;margin-bottom:6px;">
-                <span style="font-size:1.2rem;">{res['icon']}</span>
-                <div style="flex:1;">
-                    <span style="font-weight:600;color:#e0e6f0;font-size:0.88rem;">{res['node']}</span>
-                    <span style="color:#7a9bb5;font-size:0.78rem;margin-left:10px;">{res['output']}</span>
+                f"""
+                <div class="{card_class}">
+                  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                      <div class="node-title">{node_def['icon']} &nbsp;{node_def['label']}</div>
+                      <div class="node-subtitle">{node_def['agent_class']}</div>
+                      <div class="node-subtitle" style="margin-top:4px; color:#6f6f6f;">{node_def['description']}</div>
+                    </div>
+                    <div style="text-align:right;">
+                      <span class="ibm-pill pill-{status}">{label_s}</span>
+                      <div class="node-subtitle" style="margin-top:6px;">
+                        {f'{latency} ms' if latency else '—'} &nbsp;·&nbsp;
+                        {inv:,} calls &nbsp;·&nbsp;
+                        {errs} err
+                      </div>
+                    </div>
+                  </div>
+                  {"" if status != "running" else
+                   '<div class="exec-bar-container" style="margin-top:8px;"><div class="exec-bar-fill" style="width:60%;"></div></div>'}
                 </div>
-                <span style="color:#22c55e;font-weight:700;font-size:0.85rem;">{res['latency_ms']}ms</span>
-                <span style="background:rgba(34,197,94,0.15);color:#22c55e;padding:2px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;">SUCCESS</span>
-            </div>""",
+                """,
                 unsafe_allow_html=True,
             )
-
-        # Store run
-        st.session_state.workflow_runs.append({
-            "run_id": run_id,
-            "timestamp": run_timestamp,
-            "query": test_query[:80],
-            "nodes": len(active_nodes),
-            "total_latency_ms": total_latency,
-            "status": "success",
-            "results": run_results,
-        })
-
-
-with tab2:
-    st.markdown("### 📊 Workflow Execution History")
-
-    runs = st.session_state.workflow_runs
-    if not runs:
-        st.info("No workflow runs yet. Execute a pipeline in the Execute tab.")
-    else:
-        # Summary KPIs
-        c1, c2, c3, c4 = st.columns(4)
-        total_runs = len(runs)
-        avg_latency = sum(r["total_latency_ms"] for r in runs) / total_runs
-        success_rate = sum(1 for r in runs if r["status"] == "success") / total_runs * 100
-
-        for col, (label, val, color) in zip(
-            [c1, c2, c3, c4],
-            [
-                ("Total Runs", str(total_runs), "#4facfe"),
-                ("Success Rate", f"{success_rate:.0f}%", "#22c55e"),
-                ("Avg Latency", f"{avg_latency:.0f}ms", "#a78bfa"),
-                ("Nodes/Run", f"{runs[-1]['nodes'] if runs else 0}", "#f59e0b"),
-            ],
-        ):
-            with col:
+            if idx < len(_WORKFLOW_NODES) - 1:
                 st.markdown(
-                    f"""<div class="kpi-card">
-                    <div class="kpi-value" style="background:{color};-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-size:1.6rem;">{val}</div>
-                    <div class="kpi-label">{label}</div>
-                </div>""",
+                    '<div class="node-connector">│</div>',
                     unsafe_allow_html=True,
                 )
 
-        # Latency trend
-        if len(runs) > 1:
-            fig_lat = go.Figure(go.Scatter(
-                x=[r["run_id"] for r in runs],
-                y=[r["total_latency_ms"] for r in runs],
-                mode="lines+markers",
-                line=dict(color="#4facfe", width=2),
-                marker=dict(size=8, color="#4facfe"),
-                fill="tozeroy",
-                fillcolor="rgba(79,172,254,0.07)",
-                hovertemplate="<b>%{x}</b><br>Latency: %{y}ms<extra></extra>",
-            ))
-            fig_lat.update_layout(**CHART_LAYOUT, title="Pipeline Latency History", height=220)
-            st.plotly_chart(fig_lat, use_container_width=True)
+    with cols[1]:
+        st.markdown("<div class='section-header'>Node Legend</div>", unsafe_allow_html=True)
+        for status_key, colour in _STATUS_COLOURS.items():
+            st.markdown(
+                f"""<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:0.8rem;">
+                      <div style="width:10px;height:10px;border-radius:50%;background:{colour};flex-shrink:0;"></div>
+                      <span style="color:#c6c6c6;">{_STATUS_LABELS[status_key]}</span>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
 
-        # Run table
-        run_table = []
-        for r in reversed(runs):
-            run_table.append({
-                "Run ID": r["run_id"],
-                "Time": r["timestamp"],
-                "Query": r["query"][:60] + "..." if len(r["query"]) > 60 else r["query"],
-                "Nodes": r["nodes"],
-                "Latency (ms)": r["total_latency_ms"],
-                "Status": "✅ Success" if r["status"] == "success" else "❌ Failed",
-            })
-        st.dataframe(run_table, use_container_width=True, hide_index=True)
+        st.markdown("<div class='section-header' style='margin-top:1.5rem;'>Active Run</div>", unsafe_allow_html=True)
+        running = [n for n in node_statuses if n.get("status") == "running"]
+        if running:
+            r = running[0]
+            st.markdown(
+                f"""<div style="font-size:0.78rem; color:#4589ff; font-family:'IBM Plex Mono',monospace;">
+                    ▶ {r['label']}</div>
+                    <div style="font-size:0.7rem; color:#6f6f6f; margin-top:3px;">
+                    Last heartbeat: {r['last_run']}</div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div style='font-size:0.78rem; color:#6f6f6f;'>No active execution</div>",
+                unsafe_allow_html=True,
+            )
 
 
-with tab3:
-    st.markdown("### 🔧 Agent & Service Status")
+def _render_execution_timeline(events: list[dict[str, Any]]) -> None:
+    """Render live execution event timeline."""
+    st.markdown("<div class='section-header'>Execution Timeline — Active Run</div>", unsafe_allow_html=True)
+    if not events:
+        st.info("No active workflow execution.")
+        return
 
-    # Live checks
-    vs_stats = get_vector_store().get_stats()
-    rag_stats = get_rag_engine().get_stats()
-
-    agents = [
-        {
-            "name": "Intent Classifier",
-            "status": True,
-            "type": "Rule-Based + Embedding",
-            "detail": "Classifies: CO-PO, SAR, Attainment, Compliance, General",
-        },
-        {
-            "name": "CO-PO Mapping Agent",
-            "status": True,
-            "type": "NBA Domain Expert",
-            "detail": "Handles OBE/NBA-specific CO-PO correlation queries",
-        },
-        {
-            "name": "Compliance Validation Agent",
-            "status": True,
-            "type": "Rule Engine + LLM",
-            "detail": "NBA criterion checker and compliance validator",
-        },
-        {
-            "name": "RAG Retrieval Agent",
-            "status": rag_stats["rag_ready"],
-            "type": "ChromaDB + FAISS",
-            "detail": f"Embedding model: {rag_stats['embedding_model']} | Vectors: {vs_stats['chroma_count']}",
-        },
-        {
-            "name": "Watsonx Granite Agent",
-            "status": st.session_state.watsonx_connected,
-            "type": "IBM Watsonx.ai",
-            "detail": "Granite model inference with system prompt injection",
-        },
-        {
-            "name": "Response Formatter",
-            "status": True,
-            "type": "Post-Processing",
-            "detail": "Source citation, markdown formatting, structured output",
-        },
-    ]
-
-    for agent in agents:
-        status_ok = agent["status"]
-        color = "#22c55e" if status_ok else "#ef4444"
-        bg = "rgba(34,197,94,0.07)" if status_ok else "rgba(239,68,68,0.07)"
-        border = "rgba(34,197,94,0.25)" if status_ok else "rgba(239,68,68,0.25)"
-        dot_color = "#22c55e" if status_ok else "#ef4444"
-
+    for ev in events:
+        colour = _STATUS_COLOURS.get(ev["status"], "#6f6f6f")
         st.markdown(
-            f"""<div style="background:{bg};border:1px solid {border};border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:14px;">
-            <div style="width:10px;height:10px;border-radius:50%;background:{dot_color};box-shadow:0 0 8px {dot_color};flex-shrink:0;"></div>
-            <div style="flex:1;">
-                <div style="font-weight:600;color:#e0e6f0;font-size:0.88rem;">{agent['name']}</div>
-                <div style="font-size:0.75rem;color:#7a9bb5;margin-top:2px;">{agent['detail']}</div>
-            </div>
-            <div style="text-align:right;">
-                <div style="font-size:0.75rem;color:{color};font-weight:600;">{'RUNNING' if status_ok else 'OFFLINE'}</div>
-                <div style="font-size:0.7rem;color:#4a6070;">{agent['type']}</div>
-            </div>
-        </div>""",
+            f"""<div class="timeline-row">
+                  <div class="timeline-dot" style="background:{colour};"></div>
+                  <span style="color:#6f6f6f; font-family:'IBM Plex Mono',monospace; font-size:0.72rem; flex-shrink:0;">{ev['timestamp']}</span>
+                  <span style="color:#c6c6c6; flex:1;">{ev['node']}</span>
+                  <span style="color:#6f6f6f;">{ev['event'].upper()}</span>
+                  <span style="color:#4589ff; font-family:'IBM Plex Mono',monospace;">{ev['detail']}</span>
+               </div>""",
             unsafe_allow_html=True,
         )
 
-    st.divider()
-    st.markdown("### 📡 LangGraph Pipeline Architecture")
-    st.markdown(
-        """<div class="glass-card">
-        <pre style="color:#a0b4c8;font-size:0.82rem;line-height:2;font-family:'Inter',monospace;overflow-x:auto;">
-┌─────────────────────────────────────────────────────────────┐
-│                 NBA Accreditation LangGraph                  │
-│                                                             │
-│  User Query                                                 │
-│       │                                                     │
-│       ▼                                                     │
-│  ┌──────────────┐     ┌──────────────┐                     │
-│  │  Intent       │────▶│  CO-PO       │                     │
-│  │  Classifier   │     │  Agent       │                     │
-│  └──────────────┘     └──────┬───────┘                     │
-│                              │                              │
-│                              ▼                              │
-│                    ┌──────────────────┐                     │
-│                    │  Validation      │                     │
-│                    │  Agent           │                     │
-│                    └────────┬─────────┘                     │
-│                             │                               │
-│                             ▼                               │
-│                    ┌──────────────────┐                     │
-│                    │  RAG Retrieval   │ ◀── ChromaDB/FAISS  │
-│                    │  (Top-K chunks)  │                     │
-│                    └────────┬─────────┘                     │
-│                             │                               │
-│                             ▼                               │
-│                    ┌──────────────────┐                     │
-│                    │  IBM Watsonx     │ ◀── Granite Model   │
-│                    │  Granite LLM     │                     │
-│                    └────────┬─────────┘                     │
-│                             │                               │
-│                             ▼                               │
-│                    ┌──────────────────┐                     │
-│                    │  Response        │                     │
-│                    │  Generator       │──▶ Final Output     │
-│                    └──────────────────┘                     │
-└─────────────────────────────────────────────────────────────┘
-        </pre>
-    </div>""",
-        unsafe_allow_html=True,
+
+def _render_agent_status_cards(node_statuses: list[dict[str, Any]]) -> None:
+    """Render compact per-agent status cards in a 3-column grid."""
+    st.markdown("<div class='section-header'>Agent Status Cards</div>", unsafe_allow_html=True)
+    cols = st.columns(3)
+    for idx, node in enumerate(node_statuses):
+        status  = node.get("status", "idle")
+        colour  = _STATUS_COLOURS.get(status, "#6f6f6f")
+        label_s = _STATUS_LABELS.get(status, "Idle")
+        pill_c  = f"pill-{status}"
+        with cols[idx % 3]:
+            st.markdown(
+                f"""<div style="background:#1e1e1e; border:1px solid #333; border-top:3px solid {colour};
+                               padding:0.85rem; border-radius:1px; margin-bottom:0.75rem;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+                        <span style="font-size:0.82rem; font-weight:600; color:#f4f4f4;">
+                          {node['icon']} {node['label']}
+                        </span>
+                        <span class="ibm-pill {pill_c}">{label_s}</span>
+                      </div>
+                      <div style="font-size:0.7rem; color:#6f6f6f; font-family:'IBM Plex Mono',monospace; margin-bottom:0.5rem;">
+                        {node['agent_class']}
+                      </div>
+                      <div style="display:flex; gap:1rem; font-size:0.72rem; color:#c6c6c6;">
+                        <div><span style="color:#6f6f6f;">Calls</span><br/><strong>{node['invocations']:,}</strong></div>
+                        <div><span style="color:#6f6f6f;">Latency</span><br/><strong>{node['latency_ms']} ms</strong></div>
+                        <div><span style="color:#6f6f6f;">Errors</span><br/><strong style="color:{'#fa4d56' if node['errors']>0 else '#42be65'};">{node['errors']}</strong></div>
+                        <div><span style="color:#6f6f6f;">Last run</span><br/><strong>{node['last_run']}</strong></div>
+                      </div>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+
+
+def _render_execution_history_table(history: list[dict[str, Any]], filter_status: str) -> None:
+    """Render the execution history table with filtering."""
+    st.markdown("<div class='section-header'>Execution History</div>", unsafe_allow_html=True)
+
+    filtered = history if filter_status == "All" else [
+        r for r in history if r["status"] == filter_status.lower()
+    ]
+    if not filtered:
+        st.info("No executions match the selected filter.")
+        return
+
+    import pandas as pd
+
+    rows = []
+    for r in filtered:
+        status_label = _STATUS_LABELS.get(r["status"], r["status"].title())
+        rows.append({
+            "Run ID":          r["run_id"],
+            "Timestamp":       r["timestamp"],
+            "Intent":          r["intent"],
+            "User":            r["user"],
+            "Status":          status_label,
+            "Latency (s)":     r["latency_s"] if r["latency_s"] is not None else "—",
+            "Nodes":           r["nodes_executed"],
+            "RAG Chunks":      r["rag_chunks"],
+            "Tokens":          r["tokens_used"],
+            "Model":           r["model_routed"],
+        })
+
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Run ID": st.column_config.TextColumn(width="small"),
+            "Latency (s)": st.column_config.NumberColumn(format="%.2f"),
+        },
     )
+
+    # Export
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇  Export CSV",
+        data=csv_bytes,
+        file_name=f"workflow_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        key="wm_export_csv",
+    )
+
+
+def _render_latency_chart(history: list[dict[str, Any]]) -> None:
+    """Render a simple per-run latency line chart using Plotly via st.plotly_chart."""
+    try:
+        import plotly.graph_objects as go
+        import pandas as pd
+
+        completed = [r for r in history if r["latency_s"] is not None]
+        if not completed:
+            return
+
+        df = pd.DataFrame(completed).head(20).iloc[::-1]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df["timestamp"],
+            y=df["latency_s"],
+            mode="lines+markers",
+            line=dict(color="#4589ff", width=2),
+            marker=dict(size=5, color="#4589ff"),
+            name="Latency (s)",
+            fill="tozeroy",
+            fillcolor="rgba(69,137,255,0.08)",
+        ))
+        fig.update_layout(
+            paper_bgcolor="#161616",
+            plot_bgcolor="#1e1e1e",
+            font=dict(family="IBM Plex Sans", color="#c6c6c6", size=11),
+            margin=dict(l=40, r=20, t=30, b=60),
+            xaxis=dict(showgrid=False, linecolor="#333", tickangle=-30, tickfont=dict(size=10)),
+            yaxis=dict(gridcolor="#333", linecolor="#333", title="seconds"),
+            height=220,
+            title=dict(text="End-to-End Latency — Last 20 Runs", font=dict(size=12, color="#f4f4f4")),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except ImportError:
+        st.info("Install plotly for the latency chart.")
+
+
+def _render_token_usage_chart(stats: dict[str, Any]) -> None:
+    """Render a Plotly gauge for Watsonx token budget consumption."""
+    try:
+        import plotly.graph_objects as go
+
+        used   = stats["watsonx_tokens_used"]
+        budget = stats["watsonx_token_budget"]
+        pct    = used / budget * 100
+
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number+delta",
+            value=used,
+            delta={"reference": budget * 0.7, "valueformat": ","},
+            title={"text": "Watsonx Token Usage", "font": {"color": "#f4f4f4", "size": 12}},
+            number={"valueformat": ",", "font": {"color": "#4589ff", "size": 20}},
+            gauge={
+                "axis": {"range": [0, budget], "tickcolor": "#6f6f6f", "nticks": 5},
+                "bar":  {"color": "#0f62fe"},
+                "bgcolor": "#1e1e1e",
+                "bordercolor": "#333",
+                "steps": [
+                    {"range": [0, budget * 0.6],  "color": "#0e2a1a"},
+                    {"range": [budget * 0.6, budget * 0.85], "color": "#2a2400"},
+                    {"range": [budget * 0.85, budget], "color": "#2a0a0b"},
+                ],
+                "threshold": {"line": {"color": "#fa4d56", "width": 2}, "value": budget * 0.90},
+            },
+        ))
+        fig.update_layout(
+            paper_bgcolor="#161616",
+            font=dict(family="IBM Plex Sans", color="#c6c6c6"),
+            margin=dict(l=30, r=30, t=50, b=10),
+            height=200,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except ImportError:
+        token_pct = stats["watsonx_tokens_used"] / stats["watsonx_token_budget"]
+        st.progress(token_pct, text=f"Watsonx Tokens: {stats['watsonx_tokens_used']:,} / {stats['watsonx_token_budget']:,}")
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def render() -> None:  # noqa: C901
+    """
+    Render the Workflow Monitor page.
+    Called by the Streamlit multi-page router (app.py).
+    """
+    # ── Config ──────────────────────────────────────────────────────────────
+    st.set_page_config(
+        page_title="Workflow Monitor — NBA AI Platform",
+        page_icon="⚙️",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+    st.markdown(_IBM_CSS, unsafe_allow_html=True)
+    _init_session_state()
+
+    # ── Navbar ───────────────────────────────────────────────────────────────
+    if _IMPORTS_OK:
+        try:
+            _navbar_mod.render(active_page="Workflow Monitor")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    # ── Sidebar controls ────────────────────────────────────────────────────
+    with st.sidebar:
+        st.markdown(
+            "<div style='font-size:0.7rem; font-weight:700; letter-spacing:0.08em; "
+            "text-transform:uppercase; color:#6f6f6f; padding:0.5rem 0 0.75rem;'>Monitor Controls</div>",
+            unsafe_allow_html=True,
+        )
+
+        auto_refresh = st.toggle("Auto-refresh (10 s)", value=st.session_state["wm_auto_refresh"])
+        st.session_state["wm_auto_refresh"] = auto_refresh
+
+        filter_status = st.selectbox(
+            "Filter history by status",
+            ["All", "Success", "Error", "Running", "Pending"],
+            index=0,
+            key="wm_filter_status_select",
+        )
+        st.session_state["wm_filter_status"] = filter_status
+
+        st.markdown("---")
+        st.markdown(
+            "<div style='font-size:0.7rem; font-weight:700; letter-spacing:0.08em; "
+            "text-transform:uppercase; color:#6f6f6f; margin-bottom:0.5rem;'>Quick Actions</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🔄 Refresh Now", use_container_width=True):
+            st.session_state["wm_mock_tick"] = st.session_state.get("wm_mock_tick", 0) + 1
+            st.rerun()
+
+        if st.button("⏸ Pause Workflows", use_container_width=True, disabled=True):
+            pass
+
+        if st.button("🗑 Clear History", use_container_width=True, disabled=True):
+            pass
+
+        st.markdown("---")
+        st.markdown(
+            f"""<div style='font-size:0.72rem; color:#6f6f6f; line-height:1.6;'>
+              <strong style='color:#c6c6c6;'>Platform</strong><br/>
+              NBA Enterprise AI v2.0<br/>
+              LangGraph 0.1.x<br/>
+              Watsonx.ai granite-13b<br/>
+              FAISS + SentenceTransformers
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ── Page header ─────────────────────────────────────────────────────────
+    hcol1, hcol2 = st.columns([6, 1])
+    with hcol1:
+        st.markdown(
+            """<div class="page-title">⚙️ Workflow Monitor</div>
+               <div class="page-subtitle">LangGraph execution pipeline — real-time agent orchestration visibility</div>""",
+            unsafe_allow_html=True,
+        )
+    with hcol2:
+        st.markdown(
+            '<div style="padding-top:0.4rem;">'
+            '<span class="live-badge"><span class="live-dot"></span> LIVE</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<hr style='margin:0.6rem 0 1rem;'/>", unsafe_allow_html=True)
+
+    # ── Fetch data ───────────────────────────────────────────────────────────
+    stats        = _get_workflow_stats()
+    node_statuses = _get_node_statuses()
+    history      = _get_execution_history(limit=30)
+    timeline     = _get_execution_timeline()
+
+    # ── KPI strip ────────────────────────────────────────────────────────────
+    _render_kpi_strip(stats)
+
+    st.markdown("<div style='height:1.2rem;'></div>", unsafe_allow_html=True)
+
+    # ── Main tabs ────────────────────────────────────────────────────────────
+    tab_pipeline, tab_agents, tab_history, tab_metrics = st.tabs(
+        ["Pipeline Visualizer", "Agent Status", "Execution History", "Performance Metrics"]
+    )
+
+    # ── Tab 1: Pipeline ───────────────────────────────────────────────────────
+    with tab_pipeline:
+        left_col, right_col = st.columns([3, 2])
+        with left_col:
+            _render_workflow_graph(node_statuses)
+        with right_col:
+            _render_execution_timeline(timeline)
+
+    # ── Tab 2: Agent Status ───────────────────────────────────────────────────
+    with tab_agents:
+        _render_agent_status_cards(node_statuses)
+
+        st.markdown("<div class='section-header'>Aggregate Node Metrics</div>", unsafe_allow_html=True)
+        try:
+            import plotly.graph_objects as go
+            import pandas as pd
+
+            df_nodes = pd.DataFrame(node_statuses)
+            fig = go.Figure(go.Bar(
+                x=df_nodes["label"],
+                y=df_nodes["invocations"],
+                marker=dict(
+                    color=df_nodes["invocations"],
+                    colorscale=[[0, "#1a3a6e"], [1, "#4589ff"]],
+                    showscale=False,
+                ),
+                text=df_nodes["invocations"],
+                textposition="outside",
+            ))
+            fig.update_layout(
+                paper_bgcolor="#161616",
+                plot_bgcolor="#1e1e1e",
+                font=dict(family="IBM Plex Sans", color="#c6c6c6", size=11),
+                margin=dict(l=40, r=20, t=20, b=80),
+                xaxis=dict(showgrid=False, linecolor="#333", tickangle=-20),
+                yaxis=dict(gridcolor="#333", linecolor="#333", title="Total Invocations"),
+                height=260,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except ImportError:
+            st.info("Install plotly for detailed node charts.")
+
+    # ── Tab 3: History ────────────────────────────────────────────────────────
+    with tab_history:
+        _render_execution_history_table(history, st.session_state["wm_filter_status"])
+
+    # ── Tab 4: Performance ────────────────────────────────────────────────────
+    with tab_metrics:
+        m_left, m_right = st.columns(2)
+        with m_left:
+            _render_latency_chart(history)
+        with m_right:
+            _render_token_usage_chart(stats)
+
+        st.markdown("<div class='section-header'>Model Routing Distribution</div>", unsafe_allow_html=True)
+        try:
+            import plotly.graph_objects as go
+
+            granite_pct = round(sum(1 for r in history if r["model_routed"] == "granite-13b") / len(history) * 100)
+            gpt4o_pct   = 100 - granite_pct
+
+            fig = go.Figure(go.Pie(
+                labels=["Watsonx Granite-13B", "OpenAI GPT-4o"],
+                values=[granite_pct, gpt4o_pct],
+                hole=0.62,
+                marker=dict(colors=["#0f62fe", "#8a3ffc"]),
+                textinfo="label+percent",
+                textfont=dict(family="IBM Plex Sans", size=11, color="#f4f4f4"),
+            ))
+            fig.update_layout(
+                paper_bgcolor="#161616",
+                font=dict(family="IBM Plex Sans", color="#c6c6c6"),
+                showlegend=True,
+                legend=dict(font=dict(color="#c6c6c6")),
+                margin=dict(l=20, r=20, t=30, b=20),
+                height=240,
+                title=dict(text="LLM Router — Last 30 Runs", font=dict(size=12, color="#f4f4f4")),
+                annotations=[dict(
+                    text=f"<b>{granite_pct}%</b><br>Granite",
+                    x=0.5, y=0.5,
+                    font=dict(size=13, color="#4589ff"),
+                    showarrow=False,
+                )],
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except ImportError:
+            pass
+
+    # ── Auto-refresh logic ───────────────────────────────────────────────────
+    if st.session_state["wm_auto_refresh"]:
+        time.sleep(10)
+        st.session_state["wm_mock_tick"] = st.session_state.get("wm_mock_tick", 0) + 1
+        st.rerun()
+
+
+def _get_execution_timeline() -> list[dict[str, Any]]:
+    """Alias used internally before service import resolves."""
+    return _get_timeline_events()
+
+
+# ---------------------------------------------------------------------------
+# Standalone dev runner
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    render()

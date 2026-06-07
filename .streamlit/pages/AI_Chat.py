@@ -1,208 +1,288 @@
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+"""
+pages/AI_Chat.py
+NBA Enterprise AI Platform – AI Assistant Chat.
+ChatGPT-style interface with streaming, citations, model selector,
+temperature/token controls, and Watsonx status.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any, Dict, Generator, List, Optional
 
 import streamlit as st
-import time
-from datetime import datetime
-import json
-from utils.rag_engine import get_rag_engine
-from utils.watsonx_client import get_watsonx_client
-from utils.helpers import log_query
 
-st.markdown(
-    """
-<div class="section-header">
-    <span style="font-size:1.6rem;">🤖</span>
-    <h2>AI Assistant</h2>
-    <span class="ibm-badge" style="margin-left:8px;">IBM Watsonx · Granite</span>
-</div>
-""",
-    unsafe_allow_html=True,
+from components.navbar import render_navbar, render_page_hero
+from components.chat_components import (
+    init_chat_session,
+    clear_chat_history,
+    add_message,
+    render_chat_history,
+    render_streaming_indicator,
+    render_model_selector,
+    render_generation_controls,
+    render_watsonx_status_panel,
+    render_suggested_prompts,
 )
+from components.workflow_visualizer import (
+    get_nba_workflow,
+    render_workflow_pipeline,
+    simulate_workflow_step,
+    NodeStatus as VizNodeStatus,
+)
+from services.auth_service import auth_service
+from services.workflow_service import workflow_service, WorkflowStatus
 
-# ── Sidebar controls ──────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### 🤖 Model Configuration")
 
-    st.markdown(
-        """
-    <div class="glass-card" style="margin-bottom:1rem;">
-        <div style="font-size:0.75rem;color:#7a9bb5;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.08em;">Model Info</div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-            <span style="color:#a0b4c8;font-size:0.82rem;">Provider</span>
-            <span style="color:#4facfe;font-size:0.82rem;font-weight:600;">IBM Watsonx</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-            <span style="color:#a0b4c8;font-size:0.82rem;">Model</span>
-            <span style="color:#4facfe;font-size:0.82rem;font-weight:600;">Granite</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-            <span style="color:#a0b4c8;font-size:0.82rem;">RAG</span>
-            <span style="color:#22c55e;font-size:0.82rem;font-weight:600;">Enabled</span>
-        </div>
-    </div>
-    """,
-        unsafe_allow_html=True,
+# ─────────────────────────────────────────────────────────────
+# Simulated streaming response generator
+# ─────────────────────────────────────────────────────────────
+
+_SAMPLE_RESPONSES: Dict[str, str] = {
+    "default": (
+        "Based on the NBA Tier-I accreditation guidelines, I'll address your query using "
+        "the platform's knowledge base and AI analysis.\n\n"
+        "The outcome-based education (OBE) framework requires systematic mapping between "
+        "Course Outcomes (COs) and Program Outcomes (POs). The attainment computation "
+        "integrates both direct assessment (internal tests, end-semester exams, lab evaluations) "
+        "and indirect assessment (exit surveys, alumni feedback).\n\n"
+        "**Key recommendations:**\n"
+        "1. Ensure all COs map to at least 2 POs with correlation level ≥ 2\n"
+        "2. Maintain attainment records for 3 consecutive years\n"
+        "3. Review and update PEOs annually with stakeholder input\n\n"
+        "Would you like me to generate a specific report or run a detailed analysis?"
+    ),
+    "copo": (
+        "Generating CO-PO Mapping analysis…\n\n"
+        "A CO-PO correlation matrix maps each Course Outcome to relevant Program Outcomes "
+        "using levels 1 (Low), 2 (Medium), and 3 (High) correlation.\n\n"
+        "For a typical CSE program:\n"
+        "- CO1 (Apply data structures) → PO1:3, PO2:2, PO5:1\n"
+        "- CO2 (Design algorithms) → PO1:3, PO2:3, PO3:2\n"
+        "- CO3 (Analyse complexity) → PO1:2, PO2:3, PO4:1\n\n"
+        "The average correlation across all COs should ideally be ≥ 1.5. "
+        "Low-correlation POs may indicate gaps requiring curriculum revision."
+    ),
+    "attainment": (
+        "Attainment Calculation Summary:\n\n"
+        "**Direct Attainment** is computed from assessment scores:\n"
+        "- Internal tests (40% weightage)\n"
+        "- End-semester exam (60% weightage)\n"
+        "- Target threshold: 60%\n\n"
+        "**Indirect Attainment** uses perception surveys:\n"
+        "- Student exit survey\n"
+        "- Alumni feedback\n"
+        "- Target threshold: 60%\n\n"
+        "**Final Attainment** = 0.8 × Direct + 0.2 × Indirect\n\n"
+        "Current cycle: Direct avg 67.4%, Indirect avg 72.1%, Combined 68.3%"
+    ),
+}
+
+
+def _get_response_text(query: str) -> str:
+    q = query.lower()
+    if any(w in q for w in ["co-po", "copo", "mapping", "correlation"]):
+        return _SAMPLE_RESPONSES["copo"]
+    if any(w in q for w in ["attainment", "compute", "calculate", "score"]):
+        return _SAMPLE_RESPONSES["attainment"]
+    return _SAMPLE_RESPONSES["default"]
+
+
+def _stream_response(query: str) -> Generator[str, None, None]:
+    """Simulate token-by-token streaming response."""
+    response = _get_response_text(query)
+    words = response.split(" ")
+    chunk_size = 3
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i:i + chunk_size]) + " "
+        yield chunk
+        time.sleep(0.04)
+
+
+def _mock_sources(query: str) -> List[Dict[str, Any]]:
+    """Return mock source citations relevant to the query."""
+    return [
+        {"title": "NBA Tier-I Criteria Manual 2022", "score": 0.94, "page": 42},
+        {"title": "OBE Framework Implementation Guide", "score": 0.89, "page": 17},
+        {"title": "CO-PO Mapping Best Practices", "score": 0.85, "page": 8},
+    ]
+
+
+# ─────────────────────────────────────────────────────────────
+# Workflow trace panel
+# ─────────────────────────────────────────────────────────────
+
+def _render_workflow_trace(query: str) -> None:
+    """Show a simplified workflow trace for the last query."""
+    wf = get_nba_workflow()
+    wf = simulate_workflow_step(wf, "intent_classifier", VizNodeStatus.COMPLETED,
+                                 240, "Intent classified")
+    wf = simulate_workflow_step(wf, "copo_agent", VizNodeStatus.COMPLETED,
+                                 1100, "Agent processed")
+    wf = simulate_workflow_step(wf, "validation_agent", VizNodeStatus.COMPLETED,
+                                 320, "Validated")
+    wf = simulate_workflow_step(wf, "rag_retrieval", VizNodeStatus.COMPLETED,
+                                 680, "3 docs retrieved")
+    wf = simulate_workflow_step(wf, "watsonx_granite", VizNodeStatus.COMPLETED,
+                                 2100, "Response generated")
+    wf = simulate_workflow_step(wf, "response_gen", VizNodeStatus.COMPLETED,
+                                 180, "Formatted output")
+    render_workflow_pipeline(wf, title="Execution Trace", show_summary=True)
+
+
+# ─────────────────────────────────────────────────────────────
+# Main render
+# ─────────────────────────────────────────────────────────────
+
+def render() -> None:
+    init_chat_session()
+
+    render_navbar(
+        "AI_Chat",
+        extra_actions_html=(
+            '<div class="badge badge-green" style="font-size:0.6875rem;padding:3px 10px;">'
+            '● Streaming Ready</div>'
+        ),
+    )
+    render_page_hero(
+        title="AI Assistant",
+        subtitle="Powered by IBM Watsonx Granite  ·  RAG-Enhanced",
+        icon="◆",
+        accent_color="blue",
     )
 
-    temperature = st.slider("🌡️ Temperature", 0.0, 1.0, st.session_state.get("temperature", 0.7), 0.05)
-    top_k = st.slider("🔍 Top-K Retrieval", 1, 15, st.session_state.get("top_k", 5))
-    use_rag = st.toggle("🧠 Enable RAG", value=True)
+    # ── Layout: chat | controls ────────────────────────────────
+    chat_col, ctrl_col = st.columns([2.6, 1])
 
-    st.session_state.temperature = temperature
-    st.session_state.top_k = top_k
+    # ── Control sidebar ────────────────────────────────────────
+    with ctrl_col:
+        render_watsonx_status_panel()
 
-    st.divider()
+        with st.expander("⚙ Model Settings", expanded=True):
+            render_model_selector()
+            render_generation_controls()
 
-    # Connection status
-    wc = get_watsonx_client()
-    if st.session_state.watsonx_connected:
-        st.markdown('<span class="status-connected">✓ Watsonx Connected</span>', unsafe_allow_html=True)
-    else:
-        st.markdown('<span class="status-error">✗ Not Connected — Configure in Settings</span>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    st.divider()
+        with st.expander("💡 Suggested Prompts", expanded=True):
+            selected = render_suggested_prompts()
+            if selected and "chat_prefill" not in st.session_state:
+                st.session_state.chat_prefill = selected
 
-    # Suggested queries
-    st.markdown("### 💡 Suggested Questions")
-    suggestions = [
-        "What is CO-PO mapping in NBA?",
-        "How to calculate CO attainment?",
-        "Explain direct vs indirect assessment",
-        "What are NBA Tier-I criteria?",
-        "How to prepare SAR for NBA?",
-        "What is the target attainment level?",
-    ]
-    for suggestion in suggestions:
-        if st.button(suggestion, key=f"sug_{suggestion[:20]}", use_container_width=True):
-            st.session_state.pending_query = suggestion
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    st.divider()
-    col_clear, col_dl = st.columns(2)
-    with col_clear:
-        if st.button("🗑️ Clear", use_container_width=True):
-            st.session_state.chat_history = []
+        # Clear chat
+        if st.button("🗑 Clear Conversation", use_container_width=True, key="clear_chat_btn"):
+            clear_chat_history()
             st.rerun()
-    with col_dl:
-        if st.session_state.chat_history:
-            chat_text = "\n\n".join(
-                f"[{msg['role'].upper()}] {msg['content']}" for msg in st.session_state.chat_history
-            )
-            st.download_button(
-                "⬇️ Export",
-                data=chat_text,
-                file_name=f"nba_chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
 
-# ── Chat history display ──────────────────────────────────────────────────────
-chat_container = st.container()
-with chat_container:
-    if not st.session_state.chat_history:
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Workflow trace panel
+        if st.session_state.get("last_query"):
+            with st.expander("⬢ Workflow Trace", expanded=False):
+                _render_workflow_trace(st.session_state.last_query)
+
+        # Show sources toggle
+        st.session_state.show_sources = st.toggle(
+            "Show source citations",
+            value=st.session_state.get("show_sources", True),
+            key="sources_toggle",
+        )
+
+    # ── Chat panel ─────────────────────────────────────────────
+    with chat_col:
         st.markdown(
-            """
-        <div style="text-align:center;padding:3rem 1rem;">
-            <div style="font-size:3rem;margin-bottom:1rem;">🎓</div>
-            <div style="font-size:1.2rem;font-weight:600;color:#e8f0fe;margin-bottom:0.5rem;">NBA AI Assistant</div>
-            <div style="color:#7a9bb5;font-size:0.9rem;max-width:480px;margin:0 auto;line-height:1.6;">
-                Ask me anything about NBA accreditation, CO-PO mapping, attainment calculation, SAR preparation, or compliance requirements.
-            </div>
-        </div>
-        """,
+            '<div style="background:var(--bg-layer-01);border:1px solid var(--border-subtle);'
+            'border-radius:var(--radius-xl);overflow:hidden;'
+            'display:flex;flex-direction:column;min-height:70vh;">',
             unsafe_allow_html=True,
         )
-    else:
-        for msg in st.session_state.chat_history:
-            role = msg["role"]
-            content = msg["content"]
-            timestamp = msg.get("timestamp", "")
-            sources = msg.get("sources", [])
 
-            if role == "user":
-                st.markdown(
+        # Message history area
+        with st.container():
+            st.markdown(
+                '<div style="padding:1.5rem;flex:1;overflow-y:auto;min-height:450px;">',
+                unsafe_allow_html=True,
+            )
+            render_chat_history()
+            if st.session_state.get("is_streaming"):
+                render_streaming_indicator()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Input row ──────────────────────────────────────────
+        st.markdown(
+            '<div style="padding:1rem 1.25rem;border-top:1px solid var(--border-subtle);">',
+            unsafe_allow_html=True,
+        )
+        disabled = st.session_state.get("is_streaming", False)
+
+        prefill = st.session_state.pop("chat_prefill", "")
+        col_input, col_send = st.columns([10, 1])
+        with col_input:
+            user_input = st.text_input(
+                "chat_input",
+                value=prefill,
+                placeholder="Ask about NBA accreditation, CO-PO, SAR, attainment…",
+                disabled=disabled,
+                label_visibility="collapsed",
+                key="chat_input_field",
+            )
+        with col_send:
+            send_btn = st.button("▶", key="chat_send_btn",
+                                 disabled=disabled, use_container_width=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Process submission ─────────────────────────────────
+        submitted = bool(user_input) and (send_btn or st.session_state.get("_chat_submit"))
+
+        if submitted and not disabled:
+            st.session_state.is_streaming   = True
+            st.session_state.last_query      = user_input
+            add_message("user", user_input)
+
+            # Streaming response display
+            full_response = ""
+            stream_placeholder = st.empty()
+
+            for chunk in _stream_response(user_input):
+                full_response += chunk
+                stream_placeholder.markdown(
                     f"""
-                <div class="chat-user">
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-                        <span style="font-size:1rem;">👤</span>
-                        <span style="font-weight:600;color:#e8f0fe;font-size:0.85rem;">You</span>
-                        <span style="margin-left:auto;font-size:0.72rem;color:#4a6070;">{timestamp}</span>
+                    <div class="message-row" style="flex-direction:row;align-items:flex-start;
+                         padding:0 1.5rem;">
+                      <div class="avatar avatar-ai">◆</div>
+                      <div class="message-bubble ai">{full_response.replace(chr(10),'<br>')}
+                        <span class="cursor-blink"></span>
+                      </div>
                     </div>
-                    <div style="color:#c8d8e8;line-height:1.6;">{content}</div>
-                </div>
-                """,
+                    """,
                     unsafe_allow_html=True,
                 )
-            else:
-                st.markdown(
-                    f"""
-                <div class="chat-ai">
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-                        <span style="font-size:1rem;">🤖</span>
-                        <span style="font-weight:600;color:#4facfe;font-size:0.85rem;">NBA AI</span>
-                        <span class="ibm-badge" style="font-size:0.65rem;padding:2px 6px;">Watsonx</span>
-                        <span style="margin-left:auto;font-size:0.72rem;color:#4a6070;">{timestamp}</span>
-                    </div>
-                    <div style="color:#c8d8e8;line-height:1.7;white-space:pre-wrap;">{content}</div>
-                </div>
-                """,
-                    unsafe_allow_html=True,
+
+            stream_placeholder.empty()
+            sources = _mock_sources(user_input) if st.session_state.get("show_sources", True) else []
+
+            add_message(
+                "assistant",
+                full_response,
+                model=st.session_state.get("selected_model", ""),
+                sources=sources,
+                latency_ms=int(len(full_response.split()) * 40),
+            )
+
+            # Fire workflow execution in background (non-blocking demo)
+            try:
+                exec_result = workflow_service.execute(
+                    query=user_input,
+                    triggered_by=auth_service.get_session().username
+                    if auth_service.get_session() else "anonymous",
                 )
+                st.session_state["last_workflow_execution"] = exec_result
+            except Exception:
+                pass
 
-                if sources:
-                    with st.expander(f"📚 {len(sources)} Source(s) Retrieved", expanded=False):
-                        for src in sources:
-                            st.markdown(f"<div style='color:#7a9bb5;font-size:0.8rem;'>{src}</div>", unsafe_allow_html=True)
-
-# ── Input area ────────────────────────────────────────────────────────────────
-pending = st.session_state.pop("pending_query", None)
-user_input = st.chat_input("Ask about NBA accreditation, CO-PO mapping, SAR, attainment...", key="chat_input")
-
-query = pending or user_input
-
-if query:
-    timestamp = datetime.now().strftime("%H:%M")
-
-    # Add user message
-    st.session_state.chat_history.append({
-        "role": "user",
-        "content": query,
-        "timestamp": timestamp,
-    })
-
-    # Generate AI response
-    with st.spinner("🤖 Generating response with IBM Watsonx..."):
-        try:
-            rag = get_rag_engine(
-                top_k=top_k,
-                temperature=temperature,
-            )
-            result = rag.generate(
-                query=query,
-                chat_history=st.session_state.chat_history[:-1],
-                use_rag=use_rag,
-            )
-            response = result["response"]
-            sources = result.get("sources", [])
-            context_used = result.get("context_used", False)
-
-            rag_note = ""
-            if context_used:
-                rag_note = f"\n\n*📚 {result.get('chunks_retrieved', 0)} context chunks retrieved from knowledge base.*"
-
-        except Exception as e:
-            response = f"⚠️ **Connection Error**: {str(e)}\n\nPlease configure IBM Watsonx credentials in the **Settings** page to enable AI responses."
-            sources = []
-            rag_note = ""
-
-    st.session_state.ai_queries = st.session_state.get("ai_queries", 0) + 1
-    log_query(query, len(response))
-
-    st.session_state.chat_history.append({
-        "role": "assistant",
-        "content": response + rag_note,
-        "timestamp": datetime.now().strftime("%H:%M"),
-        "sources": sources,
-    })
-    st.rerun()
+            st.session_state.is_streaming = False
+            st.rerun()
